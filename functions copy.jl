@@ -106,23 +106,12 @@ end
 
 
 #l-pareto simulation for creating data from oesting et al
-function simu_specfcts_new(coord, vario_with_params, chol_mat, alpha) 
+function simu_specfcts(coord, vario_with_params, chol_mat, alpha) 
     N=size(coord,1)
     shift=rand(1:N)
     trend=[vario_with_params(coord[i,:]-coord[shift,:]) for i in 1:N]
     res=chol_mat * rand(Normal(),N)
-    res=exp.(res.-res[shift]-trend) # W_ell (maybe without normalizing constant)
-    res=res/mean(res) # W_ell/ l(w_ell)
-    res*=(1/(1-rand()))
-    res.^(1/alpha)
-end
-
-function simu_specfcts_old(coord, vario_with_params, chol_mat, alpha) 
-    N=size(coord,1)
-    shift=rand(1:N)
-    trend=[vario_with_params(coord[i,:]-coord[shift,:]) for i in 1:N]
-    res=chol_mat * rand(Normal(),N)
-    res=exp.(1/alpha*(res.-res[shift]-trend)) # W_ell (maybe without normalizing constant)
+    res=exp.((res.-res[shift]-trend)) # W_ell (maybe without normalizing constant)
     res=res/mean(res) # W_ell/ l(w_ell)
     res*=(1/(1-rand()))^(1/alpha)
 end
@@ -338,36 +327,36 @@ function FBM_simu_fast_vec(param,gridsize,num_sim)
 end
 
 #gaussian process simulation
-function r_log_gaussian(coord_fine,param,row_x0,alpha) 
+function r_log_gaussian(coord_fine,param,row_x0) 
     gridsize = Int(sqrt(size(coord_fine,1)))
     field1 = FBM_simu_fast(param, gridsize,1)[1]
     res = vec(field1')
     res = res - vec_vario(param,coord_fine,coord_fine[row_x0,:]) .-res[row_x0] #variogram
-    exp.(1/alpha*res)
+    exp.(res)
     ###           #this is just the semi variogram which is the trend we correct with
 end
 
-function r_log_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha) 
+function r_log_gaussian_vec(coord_fine,param,row_x0,num_rep) 
     gridsize = Int(sqrt(size(coord_fine,1)))
     res = FBM_simu_fast_vec(param, gridsize,num_rep)
     trend=vec_vario(param,coord_fine,coord_fine[row_x0,:])
     for i in 1:num_rep
-            res[i] = exp.(1/alpha*(res[i] - trend .-res[i][row_x0])) #variogram
+            res[i] = exp.(res[i] - trend .-res[i][row_x0]) #variogram
     end
     res
 end
 
-function r_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha) 
+function r_gaussian_vec(coord_fine,param,row_x0,num_rep) 
     gridsize = Int(sqrt(size(coord_fine,1)))
     res = FBM_simu_fast_vec(param, gridsize,num_rep)
     trend=vec_vario(param,coord_fine,coord_fine[row_x0,:])
     for i in 1:num_rep
-            res[i] = 1/alpha*(res[i] - trend .-res[i][row_x0]) #variogram
+            res[i] = (res[i] - trend .-res[i][row_x0]) #variogram
     end
     res
 end
 
-function r_cond_log_gaussian(coarse_observation,observation_x0, coord_fine,coord_coarse,param,row_x0,alpha) #coord_x0 (hier c egal)
+function r_cond_log_gaussian(coarse_observation,observation_x0, coord_fine,coord_coarse,param,row_x0) #coord_x0 (hier c egal)
     log_normalized_coarse_observation=log.(coarse_observation./observation_x0)
     gridsize = Int(sqrt(size(coord_fine,1)))
     coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
@@ -375,12 +364,12 @@ function r_cond_log_gaussian(coarse_observation,observation_x0, coord_fine,coord
     
     sigma_yy_inv = inv(cov_mat_for_vectors(coord_fine[coord_cond_rows,:],coord_fine[coord_cond_rows,:],  param, coord_fine[row_x0,:])) #hier 
     sigma_zy= cov_mat_for_vectors(coord_cond, coord_fine,param,coord_fine[row_x0,:])'  #hier
-    res=log.(r_log_gaussian(coord_fine,param,row_x0,alpha)) 
+    res=log.(r_log_gaussian(coord_fine,param,row_x0)) 
     res= res .+ sigma_zy*(sigma_yy_inv*(log_normalized_coarse_observation.-res[coord_cond_rows]))
     exp.(res)
 end
 
-function r_cond_log_gaussian_vec(coarse_observation,observation_x0, coord_fine,coord_coarse,param,row_x0,num_rep,alpha) #coord_x0 (hier c egal)
+function r_cond_log_gaussian_vec(coarse_observation,observation_x0, coord_fine,coord_coarse,param,row_x0,num_rep) #coord_x0 (hier c egal)
     #first dim sparse observation, second dim repetition, third dim site
     gridsize = Int(sqrt(size(coord_fine,1)))
     coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
@@ -388,7 +377,7 @@ function r_cond_log_gaussian_vec(coarse_observation,observation_x0, coord_fine,c
     
     sigma_yy_inv = inv(cov_mat_for_vectors(coord_fine[coord_cond_rows,:],coord_fine[coord_cond_rows,:],  param, coord_fine[row_x0,:])) #hier 
     sigma_zy= cov_mat_for_vectors(coord_cond, coord_fine,param,coord_fine[row_x0,:])'   
-    res=[r_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha) for j in 1:size(coarse_observation,1)]
+    res=[r_gaussian_vec(coord_fine,param,row_x0, num_rep) for j in 1:size(coarse_observation,1)]
     for j in 1:size(coarse_observation,1)
         for i in 1:num_rep
             log_normalized_coarse_observation = log.(coarse_observation[j,:]./observation_x0[j])
@@ -431,7 +420,7 @@ end
 # end
 
 function exceed_cond_sim(num_runs,num_obs,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
-    tmp = r_cond_log_gaussian_vec(observation_data, observation_x0, coord_fine, coord_coarse,param,row_x0,num_runs+1,alpha)
+    tmp = r_cond_log_gaussian_vec(observation_data, observation_x0, coord_fine, coord_coarse,param,row_x0,num_runs+1)
     res_ell_X = [0.0 for i in 1:num_obs] 
     old_value = tmp[1][1]
    #old_value=r_cond_log_gaussian(observation_data[1,:],observation_x0[1], coord_fine,coord_coarse,param,row_x0)
@@ -468,13 +457,8 @@ function log_d_gaussian(trend,cov_mat_inv,x,inv_determinant)
     (-0.5*transpose(x-trend) * cov_mat_inv * (x-trend) )+0.5*log(inv_determinant)#+log(sqrt((2*pi)^(-N)))
 end
 
-function d_gaussian(trend,cov_mat_inv,x,inv_determinant)
-    sqrt((2*pi)^(-length(trend))*det(inv_determinant))*exp(-1/2*(transpose(x-trend)*cov_mat_inv*(x-trend)))
-    
-end
-
 #log likelihood of log gaussian density of observations 
-function l_1_fun_old(coord_fine,coord_coarse,coarse_observation,param, observation_x0, row_x0)
+function l_1_fun(coord_fine,coord_coarse,coarse_observation,param, observation_x0, row_x0)
     gridsize = Int(sqrt(size(coord_fine,1)))
     coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.* gridsize)./gridsize)
     cov_mat_coarse_inv= inv(cov_mat_for_vectors(coord_fine[coord_cond_rows,:],coord_fine[coord_cond_rows,:],  param, coord_fine[row_x0,:])) #hier 
@@ -483,14 +467,6 @@ function l_1_fun_old(coord_fine,coord_coarse,coarse_observation,param, observati
     sum([(log_d_gaussian(trend ,cov_mat_coarse_inv , log.(coarse_observation[i,:]./observation_x0[i]), inv_determinant)) for i in 1:size(coarse_observation,1)])
 end
 
-function l_1_fun(coord_fine,coord_coarse,coarse_observation,param, observation_x0, row_x0, alpha)
-    gridsize = Int(sqrt(size(coord_fine,1)))
-    coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.* gridsize)./gridsize)
-    cov_mat_coarse_inv= inv(cov_mat_for_vectors(coord_fine[coord_cond_rows,:],coord_fine[coord_cond_rows,:],  param, coord_fine[row_x0,:])) #hier 
-    inv_determinant = det(cov_mat_coarse_inv)
-    trend = -vec_vario(param,coord_fine[coord_cond_rows,:],coord_fine[row_x0,:])
-    sum([log(d_gaussian(trend ,cov_mat_coarse_inv , alpha*log.(coarse_observation[i,:]./observation_x0[i]), inv_determinant)*alpha^length(trend)) for i in 1:size(coarse_observation,1)])
-end
 
 
 #reciprocal mean estimation
@@ -503,7 +479,7 @@ end
 #  end
 
  function l_2_fun(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c)
-    tmp = r_log_gaussian_vec(coord_fine,param,row_x0, N_est_c,alpha) 
+    tmp = r_log_gaussian_vec(coord_fine,param,row_x0, N_est_c) 
     -number_of_exceed * log(mean([mean(tmp[i] 
         )^(alpha) for i in 1:N_est_c]))  
      # minus for 1/c_l (in log)
@@ -524,7 +500,7 @@ end
 
 
  #conditional mean estimator for intergal part #add param zu l_3
-function l_3_fun_old(coord_fine, coord_coarse, param, row_x0, coarse_observation, observation_x0, alpha, N_est_cond)   
+function l_3_fun(coord_fine, coord_coarse, param, row_x0, coarse_observation, observation_x0, alpha, N_est_cond)   
     tmp = r_cond_log_gaussian_vec(coarse_observation,observation_x0,coord_fine, coord_coarse, param, row_x0, N_est_cond)
     res_cond_int = zeros(N_est_cond,size(coarse_observation,1))
     for row in 1:N_est_cond
@@ -534,13 +510,6 @@ function l_3_fun_old(coord_fine, coord_coarse, param, row_x0, coarse_observation
     end
     sum(log.(mean( res_cond_int, dims=1)))
 end
-
-function l_3_fun(observation_x0, alpha, threshold)   
-    sum([log(alpha*(observation_x0[i]/threshold)^(-alpha-1)) for i in 1:size(observation_x0,1)])
-end
-
-
-
 
 
 #r_cond_log_gaussian(coarse_observation,observation_x0, coord_fine,coord_coarse,param,row_x0) 
@@ -556,9 +525,7 @@ function uniform_proposal(old_param,eps,min_val,max_val)
     end
 end
 
-function gaussian_proposal(old_param,eps)
-    return exp(rand(Normal(log(old_param),eps)))
-end
+
 
 
 
@@ -578,23 +545,6 @@ function parameter_update(param_old,param_new,log_likelihood_old,log_likelihood_
     else
         #else we just keep the old values and return them
         return(param_old,log_likelihood_old)
-    end
-end
-function parameter_update(beta_old,c_old,alpha_old,beta_new,c_new,alpha_new,log_likelihood_old,log_likelihood_new)
-    #calculate MCMC acceptance rate a
-    if log_likelihood_new<log_likelihood_old
-        a=exp(log_likelihood_new-log_likelihood_old)
-    else
-        a=1
-    end
-    rand_sample=rand()
-    #accept new value with probability set as acceptance rate a
-    if (rand_sample<a)
-        #we update param aka return the new ones
-        return(beta_new,c_new,alpha_new,log_likelihood_new)
-    else
-        #else we just keep the old values and return them
-        return(beta_old,c_old,alpha_old,log_likelihood_old)
     end
 end
 
@@ -617,79 +567,14 @@ function MCMC(N_MCMC,observation_data,observation_x0,threshold, alpha, coord_fin
         par_beta_old=par_beta_vec[trial]
         par_c_old=par_c_vec[trial]
         #fixed param
-        (modified_observation, modified_observation_x0) = exceed_cond_sim(10,num_sim,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
+        (modified_observation, modified_observation_x0) = exceed_cond_sim(5,num_sim,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
 
         #fixed param
         #gridsize = Int(sqrt(size(coord_fine,1)))
         #coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
+        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0)
         l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold)  
-        log_likelihood_old=sum([l1,l2,l3])
-        #new param 
-
-        #new params
-        par_beta_old=param[2]
-        par_c_old=param[1]
-        alpha_old=alpha
-        #propose new params
-        eps_beta=0.05
-        eps_c=0.1
-        eps_alpha=0.1
-
-
-        param[2]=uniform_proposal(par_beta_old,eps_beta,0.0,2.0)
-        par_beta=param[2]
-        param[1]=gaussian_proposal(par_c_old,eps_c)
-        par_c=param[1]
-        alpha=gaussian_proposal(alpha_old,eps_alpha)
-
-
-        #calculate new log likelihood
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
-        l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold)  
-        log_likelihood_new=sum([l1,l2,l3])  
-
-        #MCMC update of param according to acceptance rate calculated with old and new likelihoods
-        #param[2],log_likelihood_old=parameter_update(par_beta_old,par_beta,log_likelihood_old,log_likelihood_new)
-        param[2],param[1],alpha,log_likelihood_old =parameter_update(par_beta_old,par_c_old,alpha_old,par_beta,par_c,alpha,log_likelihood_old,log_likelihood_new)
-        #safe param after MCMC step
-        par_beta_vec[trial+1]=param[2]
-        par_c_vec[trial+1]=param[1]  
-        par_alpha_vec[trial+1]=alpha 
-        #just print every n_trial_print's trial number to see how fast programme runs
-        if trial%n_trial_print==0
-            println(trial)
-        end
-    end
-    Dict( "beta" => par_beta_vec, "c" => par_c_vec, "alpha" => par_alpha_vec)
-end  
-
-#MCMC Algorithm
-function MCMC_old(N_MCMC,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0,n_trial_print,N_est_c,N_est_cond)
-
-    num_obs=size(observation_data,1)
-
-    par_beta_vec  = repeat([param[2]],N_MCMC+1)
-    par_c_vec = [param[1] for i=1:N_MCMC+1]
-    par_alpha_vec = [alpha for i=1:N_MCMC+1]
-    for trial in 1:N_MCMC
-        #println("current trial: $trial and current param: $param")
-        param[2]=par_beta_vec[trial]
-        param[1]=par_c_vec[trial]
-        alpha=par_alpha_vec[trial]
-        par_beta_old=par_beta_vec[trial]
-        par_c_old=par_c_vec[trial]
-        #fixed param
-        (modified_observation, modified_observation_x0) = exceed_cond_sim(10,num_sim,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
-
-        #fixed param
-        #gridsize = Int(sqrt(size(coord_fine,1)))
-        #coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
-        l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold)  
+        l3=l_3_fun(coord_fine, coord_coarse, param, row_x0, modified_observation, modified_observation_x0, alpha, N_est_cond)   
         log_likelihood_old=sum([l1,l2,l3])
         #new param c
 
@@ -701,9 +586,9 @@ function MCMC_old(N_MCMC,observation_data,observation_x0,threshold, alpha, coord
         par_beta=param[2]
 
         #calculate new log likelihood
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
+        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0)
         l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold)   
+        l3=l_3_fun(coord_fine, coord_coarse, param, row_x0, modified_observation, modified_observation_x0, alpha, N_est_cond)   
         log_likelihood_new=sum([l1,l2,l3])  
 
         #MCMC update of param according to acceptance rate calculated with old and new likelihoods
@@ -718,27 +603,27 @@ function MCMC_old(N_MCMC,observation_data,observation_x0,threshold, alpha, coord
         param[1]=uniform_proposal(par_c_old,eps_c,0.0,10.0)
         par_c=param[1]
         #calculate new log likelihood
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
+        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0)
         l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold)   
+        l3=l_3_fun(coord_fine, coord_coarse, param, row_x0, modified_observation, modified_observation_x0, alpha, N_est_cond)   
         log_likelihood_new=sum([l1,l2,l3])  
         #MCMC update of param according to acceptance rate calculated with old and new likelihoods
         param[1],log_likelihood_old=parameter_update(par_c_old,par_c,log_likelihood_old,log_likelihood_new)
         #safe param c after MCMC step
         par_c_vec[trial+1]=param[1]     
-
+        
+        
         #new param alpha
+        #calculate old log likelihood
+        number_of_exceed=size(modified_observation,1)
+        log_likelihood_old_alpha=number_of_exceed*log(alpha) + l_2_fun(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c) + (-alpha-1)*sum(log.(modified_observation_x0./threshold))
         alpha_old=alpha
         #propose new alpha
-        eps_alpha=0.1
+        eps_alpha=0.05
         alpha=uniform_proposal(alpha_old,eps_alpha,0.0,10.0)
         #calculate new log likelihood
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
-        l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold) 
-        log_likelihood_new=sum([l1,l2,l3])  
-        #MCMC update of param according to acceptance rate calculated with old and new likelihoods
-        alpha,log_likelihood_old=parameter_update(alpha_old,alpha,log_likelihood_old,log_likelihood_new)
+        log_likelihood_new_alpha=number_of_exceed*log(alpha) + l_2_fun(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c) + (-alpha-1)*sum(log.(modified_observation_x0./threshold))
+        alpha,log_likelihood_old_alpha=parameter_update(alpha_old,alpha,log_likelihood_old_alpha,log_likelihood_new_alpha)
         #safe param c after MCMC step
         par_alpha_vec[trial+1]=alpha 
         #just print every n_trial_print's trial number to see how fast programme runs
@@ -748,4 +633,3 @@ function MCMC_old(N_MCMC,observation_data,observation_x0,threshold, alpha, coord
     end
     Dict( "beta" => par_beta_vec, "c" => par_c_vec, "alpha" => par_alpha_vec)
 end  
-

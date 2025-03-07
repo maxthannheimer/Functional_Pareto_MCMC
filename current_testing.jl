@@ -2,6 +2,29 @@ include("functions.jl")
 
 
 
+
+
+
+
+A=rand(3,3)
+
+T=MvNormal([1.0,1.0,1.0],A'*A)
+
+pdf(T,[1.0,1.0,1.0])
+
+f(x,mu,sigma)=1/sqrt((2*pi)^3*det(sigma))*exp(-1/2*((x-mu)'*inv(sigma)*(x-mu)))
+
+f([1.0,1.0,1.0],[1.0,1.0,1.0],A'*A)
+length([1.0,1.0])
+
+N_test=1000
+par=5.0
+par_vec=repeat([par],N_test)
+for i in 2:N_test
+par_vec[i]=gaussian_proposal(par_vec[i-1],0.01)
+end
+mean(par_vec)
+scatter(1:N_test,par_vec)
 #inputs
 gridsize=20 #lenght of fine grid
 N_fine=gridsize^2 #number of fine grid points
@@ -240,3 +263,72 @@ end
 maximum(
     abs.((emp_cov_mat-true_cov_mat)./(true_cov_mat.+10^(-8)))
     )
+
+
+
+
+    include("functions.jl")
+
+#inputs
+gridsize=5#lenght of fine grid
+N_fine=gridsize^2 #number of fine grid points
+N_coarse=5 #number of weather stations/ conditioning points, obersavation points
+num_sim=1000 #number of simulated realizations
+
+#true params for simulation
+alpha_true = 1.0
+beta_true=1.0
+c_true=1.0
+param=[ c_true , beta_true]
+alpha=1.0
+
+#Threshold definition as quantile
+p=0.98
+threshold= (1-p)^(-1/alpha)
+#threshold=1.0
+
+#MCMC params
+N_MCMC=1500
+param_start=[1.0,1.0]
+alpha_start=1.0
+N_est_c=1000
+N_est_cond=5
+N_burn_in=0
+
+#create grids
+
+
+#safe grid and observation points, also plots if last argument is true
+#(coord_coarse, coord_fine, row_x0)=Create_Grid_and_Observation(gridsize,N_coarse, true)
+(coord_coarse, coord_fine, row_x0)=Create_Grid_and_Observation_on_fine_grid(gridsize,N_coarse, true)
+
+#gives the nearest fine gride coordinates for each coarse grid obsrvation 
+#last argument is the coarse coordinates rounded to the nearest gridpoint coordinates
+coord_cond_rows=get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
+
+
+
+#Simulate data on grid
+
+
+
+#simulate data on all points and reduce it to observation data (  coarse observations)
+#cholmat=chol_mat(vcat(coord_fine, coord_coarse), x->vario(x,param))
+cholmat=chol_mat(coord_fine, x->vario(x,param))
+#@time(sim_data= [simu_specfcts(vcat(coord_fine, coord_coarse), x->vario(x,param), cholmat, alpha_true)  for i in 1:num_sim])
+@time(sim_data= [simu_specfcts_new(coord_fine, x->vario(x,param), cholmat, alpha_true)  for i in 1:num_sim])
+sim_data=reduce(hcat,sim_data)' #just make vector of vectors a matrix (same below for observations)
+#observation_data=reduce(hcat,[sim_data[i,N_fine+1:N_fine+N_coarse] for i in 1:num_sim])' #first argument is number of sim, second is coordinate
+observation_data=reduce(hcat,[sim_data[i,coord_cond_rows] for i in 1:num_sim])' #first argument is number of sim, second is coordinate
+observation_x0=reduce(hcat,[sim_data[i,row_x0] for i in 1:num_sim])'
+
+
+
+
+
+
+
+   @time( (modified_observation, modified_observation_x0) = exceed_cond_sim(10,num_sim,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
+   )
+
+   size(modified_observation_x0,1)
