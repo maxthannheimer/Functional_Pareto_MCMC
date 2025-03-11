@@ -276,7 +276,7 @@ N_coarse=5 #number of weather stations/ conditioning points, obersavation points
 num_sim=1000 #number of simulated realizations
 
 #true params for simulation
-alpha_true = 1.0
+alpha_true = 4.0
 beta_true=1.0
 c_true=1.0
 param=[ c_true , beta_true]
@@ -284,7 +284,7 @@ alpha=1.0
 
 #Threshold definition as quantile
 p=0.98
-threshold= (1-p)^(-1/alpha)
+threshold= (1-p)^(-1/alpha_true)
 #threshold=1.0
 
 #MCMC params
@@ -328,7 +328,27 @@ observation_x0=reduce(hcat,[sim_data[i,row_x0] for i in 1:num_sim])'
 
 
 
-   @time( (modified_observation, modified_observation_x0) = exceed_cond_sim(10,num_sim,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
+   @time( (modified_observation, modified_observation_x0,threshold) = exceed_cond_sim_quantile(100,num_sim,observation_data,observation_x0,0.98, alpha, coord_fine,coord_coarse,param,row_x0 )
    )
 
-   size(modified_observation_x0,1)
+   res_ell_X
+
+   threshold=quantile(sort(res_ell_X),given_quantile)
+
+
+   l_1_fun_old(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,102)
+    l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,20)
+
+
+
+   size(modified_observation,1)
+
+
+   tmp=r_cond_log_gaussian_vec(observation_data, observation_x0, coord_fine, coord_coarse,param,row_x0,10+1,alpha)
+
+   tmp[1][5]
+
+   get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
+
+   coord_coarse=coord_fine[get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize),:]
+   coord_coarse

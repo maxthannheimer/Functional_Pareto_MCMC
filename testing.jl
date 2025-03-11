@@ -7,19 +7,19 @@ N_coarse=10 #number of weather stations/ conditioning points, obersavation point
 num_sim=250 #number of simulated realizations
 
 #true params for simulation
-alpha_true = 1.0
+alpha_true = 4.0
 beta_true=1.0
 c_true=1.0
 param=[ c_true , beta_true]
-alpha=1.0
+alpha=4.0
 
 #Threshold definition as quantile
-#p=0.0
-#threshold= (1-p)^(-1/alpha)
-threshold=1.0
+p=0.99
+threshold= (1-p)^(-1/alpha)
+#threshold=1.0
 
 #MCMC params
-N_MCMC=5000
+N_MCMC=1000
 param_start=[1.0,1.0]
 alpha_start=1.0
 N_est_c=1000
@@ -27,10 +27,12 @@ N_est_cond=5
 N_burn_in=1000
 
 #create grids
+#create grid and observation points, also plots if last argument is true
+Create_Grid_and_Observation(gridsize,N_coarse, true)
 
-
-#safe grid and observation points, also plots if last argument is true
-#(coord_coarse, coord_fine, row_x0)=Create_Grid_and_Observation(gridsize,N_coarse, true)
+#create grid and observation points, also plots if last argument is true
+#here the coarse observation points are already on the fine grid
+#also safe coords 
 (coord_coarse, coord_fine, row_x0)=Create_Grid_and_Observation_on_fine_grid(gridsize,N_coarse, true)
 
 #gives the nearest fine gride coordinates for each coarse grid obsrvation 
@@ -39,10 +41,24 @@ coord_cond_rows=get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize
 
 
 
+##############
+#variograms and matrices
+##############
+
+#vario
+#variogram vario of the process 
+vario([1.0 , 1.0 ], [1/2,1/2])
+vario([1.0,1.0],param)
+#vec_vario
+##variogram vario of the process for 2 d coordinates, written as  matrix with normalization in point coord_x0
+vec_vario(param,coord_fine,coord_fine[row_x0,:])
+vec_vario([1/2,1/2],[0.0 1.0;1.0 1.0],[0.0,0.0] )
+
+#generates covariance function depending on variogram with reference point 
+cov_fun_vario([1/2,1/2],[0.1,0.1],[0.2,0.2],[0.0, 0.0])
+cov_fun_vario(param,coord_fine[1,:],coord_fine[2,:],coord_fine[row_x0,:])
+
 #Simulate data on grid
-
-
-
 #simulate data on all points and reduce it to observation data (  coarse observations)
 #cholmat=chol_mat(vcat(coord_fine, coord_coarse), x->vario(x,param))
 cholmat=chol_mat(coord_fine, x->vario(x,param))
