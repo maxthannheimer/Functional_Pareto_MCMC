@@ -90,14 +90,17 @@ end
 
 
 #variogram of the process 
+# c⋅||x||^β
 vario(x,param)=param[1]*sqrt(
                                             (x[1])^2
                                             + (x[2])^2
                                             )^param[2]
 #variogram of the process (2 d coordinates, written as vector or matrix)
+# c⋅||x-x0||^β for each location in coord_fine
 vec_vario(param,coord_fine,coord_x0)=param[1].*norm.(eachrow(coord_fine.-coord_x0')).^param[2]
 
-
+#cov_function for two locations x and y 
+# c⋅||x-x0||^β + c⋅||y-x0||^β -c⋅||x-y||^β 
 function cov_fun_vario(param,x,y,coord_x0)
     vario(x-coord_x0,param) + vario(y-coord_x0,param)-vario(x-y,param)
 end
@@ -105,7 +108,7 @@ end
 
 
 
-#l-pareto simulation for creating data from oesting et al
+#thre different l-pareto simulation approaches for creating data from oesting et al, not sure if valied for α≠1
 function simu_specfcts_new(coord, vario_with_params, chol_mat, alpha) 
     N=size(coord,1)
     shift=rand(1:N)
@@ -146,9 +149,31 @@ function simu_specfcts_verynew(coord, vario_with_params, chol_mat, alpha)
     return(res/mean(res))
 end 
 
+
+#using MCMC approach from dombry et all 2015 to simulate chain with pareto process as stationary distrib
+function simu_specfcts_MCMC(num_runs, alpha, coord_fine,param,row_x0 )
+    #sample num_runs+1 many realizations of exp(1/α[G(s)-G(x0)-γ(s-x0)])
+    tmp = r_log_gaussian_vec(coord_fine,param,row_x0,num_runs+1,alpha) 
+    old_value = tmp[1]
+    #use samples in MCMC approach to converge to stationary distrib W^(r)
+    for trial in 1:num_runs
+            proposal = tmp[trial+1]
+            acceptance_rate = min(1,mean(proposal)^alpha/mean(old_value)^alpha)   
+            if (rand()< acceptance_rate)
+                old_value=proposal
+            end
+    end
+    #normalize sample and multiply pareto intesity to get pareto process sample
+    proposal=proposal/mean(proposal)
+    proposal*=(1/(1-rand()))^(1/alpha)
+    #proposal=proposal*(1/(1-rand()))^(1/alpha)
+end
+
 #cov and chol matrices for gaussian processes
 
-#cholesky matrix for given vario_with_params and coords (with small numeric constant addition for stability)
+#cholesky matrix 
+#calculates cholesky matrix without normalization for given coordinates and the distance based variogram with parameters
+# (with small numeric constant addition for stability)
 function chol_mat(coord, vario_with_params)
     N=size(coord,1)
     cov_mat=ones(N,N)
@@ -163,13 +188,16 @@ end
 
 
 #Cov Mat 
+#calculate cov matrix for to matrices of coordinates and the variogramm given via param and normalized at x0
 function cov_mat_for_vectors(coord_x, coord_y, param, coord_x0)
     Nx=size(coord_x,1)
     Ny=size(coord_y,1)
     cov_mat=ones(Nx,Ny)
     for ix in 1:Nx
         for jy in 1:Ny
-            cov_mat[ix,jy]=cov_fun_vario(param,coord_x[ix,:], coord_y[jy,:], coord_x0 )  #vario(coord[i,:])+vario(coord[j,:])-vario(coord[i,:]-coord[j,:])
+            cov_mat[ix,jy]=cov_fun_vario(param,coord_x[ix,:], coord_y[jy,:], coord_x0 )  
+            #second implementation to check if everything works
+            #cov_mat[ix,jy]=vario(coord_x[ix,:]-coord_x0,param)+vario(coord_y[jy,:]-coord_x0,param)-vario(coord_x[ix,:]-coord_y[jy,:],param)
         end
     end
     cov_mat
@@ -185,7 +213,7 @@ end
 
 #create functions for embedding simulation, one for 2dfft, one for modified cov function and one for the simulation, further one to apply simulation and one to apply conditional simulation
 
-#mathlab fft2 analog function
+#matlab fft2 analog function
 function fft2(A)
     # Apply 1D FFT along each dimension
     fft_rows = fft(A, 1)
@@ -195,6 +223,8 @@ function fft2(A)
     return fft_cols
 end
 
+#alternative implementation of fft2 for comparision
+#frist create FourierMatrix
 function getFourierMatrix(n)
     F=rand(n,n)*im
     for i in 0:(n-1),j in 0:(n-1)
@@ -203,6 +233,7 @@ function getFourierMatrix(n)
     F   
 end
 
+#Then peform Fourier Transform
 function fft2_hardcode(A)
     F=getFourierMatrix(size(A,1))
     fft_rows = F*A
@@ -356,6 +387,7 @@ function FBM_simu_fast_vec(param,gridsize,num_sim)
 end
 
 #gaussian process simulation
+#simulate exp(1/α[G(s)-G(x0)-γ(s-x0)])
 function r_log_gaussian(coord_fine,param,row_x0,alpha) 
     gridsize = Int(sqrt(size(coord_fine,1)))
     field1 = FBM_simu_fast(param, gridsize,1)[1]
@@ -364,7 +396,7 @@ function r_log_gaussian(coord_fine,param,row_x0,alpha)
     exp.(1/alpha*res)
     ###           #this is just the semi variogram which is the trend we correct with
 end
-
+#simulate numrep many exp(1/α[G(s)-G(x0)-γ(s-x0)])
 function r_log_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha) 
     gridsize = Int(sqrt(size(coord_fine,1)))
     res = FBM_simu_fast_vec(param, gridsize,num_rep)
@@ -375,6 +407,7 @@ function r_log_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha)
     res
 end
 
+#simulate numrep many 1/α [G(s)-G(x0)-γ(s-x0)] 
 function r_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha) 
     gridsize = Int(sqrt(size(coord_fine,1)))
     res = FBM_simu_fast_vec(param, gridsize,num_rep)
@@ -650,7 +683,7 @@ end
 
 
 #MCMC Algorithm
-function MCMC(N_MCMC,observation_data,observation_x0,threshold_quantile, alpha, coord_fine,coord_coarse,param,row_x0,n_trial_print,N_est_c,N_est_cond)
+function MCMC(N_MCMC,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0,n_trial_print,N_est_c,N_est_cond)
 
     num_obs=size(observation_data,1)
 
@@ -664,8 +697,9 @@ function MCMC(N_MCMC,observation_data,observation_x0,threshold_quantile, alpha, 
         alpha=par_alpha_vec[trial]
         
         #eceed sim
-        (modified_observation, modified_observation_x0,threshold) = exceed_cond_sim_quantile(20,num_sim,observation_data,observation_x0,threshold_quantile, alpha, coord_fine,coord_coarse,param,row_x0 )
-        
+        #(modified_observation, modified_observation_x0,threshold) = exceed_cond_sim_quantile(20,num_sim,observation_data,observation_x0,threshold_quantile, alpha, coord_fine,coord_coarse,param,row_x0 )
+        (modified_observation, modified_observation_x0) = exceed_cond_sim(20,num_sim,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
+
         
         #fixed threshold, all exceed 
         #threshold=1.0

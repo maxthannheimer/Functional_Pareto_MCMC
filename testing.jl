@@ -38,8 +38,9 @@ Create_Grid_and_Observation(gridsize,N_coarse, true)
 #gives the nearest fine gride coordinates for each coarse grid obsrvation 
 #last argument is the coarse coordinates rounded to the nearest gridpoint coordinates
 coord_cond_rows=get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
-
-
+#redefine it to make sure its in the right order
+coord_coarse=coord_fine[coord_cond_rows,:]
+coord_x0=coord_fine[row_x0,:]
 
 ##############
 #variograms and matrices
@@ -47,29 +48,73 @@ coord_cond_rows=get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize
 
 #vario
 #variogram vario of the process 
-vario([1.0 , 1.0 ], [1/2,1/2])
+vario([1.0 , 1.0 ], [1/2,1/2]) 
 vario([1.0,1.0],param)
 #vec_vario
 ##variogram vario of the process for 2 d coordinates, written as  matrix with normalization in point coord_x0
 vec_vario(param,coord_fine,coord_fine[row_x0,:])
+vec_vario(param,coord_fine,[0.0, 0.0])
 vec_vario([1/2,1/2],[0.0 1.0;1.0 1.0],[0.0,0.0] )
 
 #generates covariance function depending on variogram with reference point 
 cov_fun_vario([1/2,1/2],[0.1,0.1],[0.2,0.2],[0.0, 0.0])
 cov_fun_vario(param,coord_fine[1,:],coord_fine[2,:],coord_fine[row_x0,:])
+cov_fun_vario(param,coord_fine[1,:],coord_fine[2,:],[0.0, 0.0])
 
 #Simulate data on grid
 #simulate data on all points and reduce it to observation data (  coarse observations)
-#cholmat=chol_mat(vcat(coord_fine, coord_coarse), x->vario(x,param))
-cholmat=chol_mat(coord_fine, x->vario(x,param))
-#@time(sim_data= [simu_specfcts(vcat(coord_fine, coord_coarse), x->vario(x,param), cholmat, alpha_true)  for i in 1:num_sim])
-@time(sim_data= [simu_specfcts(coord_fine, x->vario(x,param), cholmat, alpha_true)  for i in 1:num_sim])
+#use mcmc approach via simu_specfcts_MCMC, let chain run for 2000 steps for each observation
+num_runs=2000
+@time(sim_data= [simu_specfcts_MCMC(num_runs, alpha, coord_fine,param,row_x0 ) for i in 1:num_sim] )
 sim_data=reduce(hcat,sim_data)' #just make vector of vectors a matrix (same below for observations)
 #observation_data=reduce(hcat,[sim_data[i,N_fine+1:N_fine+N_coarse] for i in 1:num_sim])' #first argument is number of sim, second is coordinate
+
+
+#reduce to the coarse sites, treat as observation data
 observation_data=reduce(hcat,[sim_data[i,coord_cond_rows] for i in 1:num_sim])' #first argument is number of sim, second is coordinate
 observation_x0=reduce(hcat,[sim_data[i,row_x0] for i in 1:num_sim])'
 
-#run MCMC algorithm
+
+
+#NOW WE HAVE OBSERVATIONS: NEXT STEP: FUNCTIONS TO DO INFERENCE
+
+#chol_mat (not used in the moment)
+#calculates cholesky matrix without normalization for given coordinates and the distance based variogram with parameters
+cholmat=chol_mat(coord_fine, x->vario(x,param))
+
+
+#Cov Mat 
+#calculate cov matrix for to matrices of coordinates and the variogramm given via param and normalized at coord_x0 (or [0, 0]) 
+cov_mat_for_vectors(coord_coarse, coord_coarse, param, coord_x0)
+cov_mat_for_vectors(coord_coarse, coord_coarse, param, [0.0,0.0])
+
+
+
+
+# Circulant embedding testing will follow in seperate field
+
+
+
+#gaussian process simulation
+
+#r_gaussian_vec
+#simulate numrep many 1/α [G(s)-G(x0)-γ(s-x0)] 
+num_rep=10
+r_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha)
+
+#simulate numrep many exp(1/α[G(s)-G(x0)-γ(s-x0)])
+r_log_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha) 
+
+
+
+
+
+
+
+
+
+
+#EVERYTHING IS PUT TOGETHER IN MCMC function which estimates parameters via MCMC algorithm for observaed data
 
 
 println(param_start)
