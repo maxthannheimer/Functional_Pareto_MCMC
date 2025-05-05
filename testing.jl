@@ -69,6 +69,8 @@ num_runs=2000
 sim_data=reduce(hcat,sim_data)' #just make vector of vectors a matrix (same below for observations)
 #observation_data=reduce(hcat,[sim_data[i,N_fine+1:N_fine+N_coarse] for i in 1:num_sim])' #first argument is number of sim, second is coordinate
 
+#get threshold empirically:
+@time( quantile_threshold(num_runs,alpha,coord_fine,param,row_x0,0.8,1000))
 
 #reduce to the coarse sites, treat as observation data
 observation_data=reduce(hcat,[sim_data[i,coord_cond_rows] for i in 1:num_sim])' #first argument is number of sim, second is coordinate
@@ -91,7 +93,18 @@ cov_mat_for_vectors(coord_coarse, coord_coarse, param, [0.0,0.0])
 
 
 
-# Circulant embedding testing will follow in seperate field
+# Circulant embedding testing will follow in seperate file
+n_test=10000
+@time begin
+tmp=[FBM_simu_fast_vec_dependent(param,gridsize,num_sim) for i in 1:n_test]
+println("dependend simulation")
+end
+
+
+@time begin
+tmp=[FBM_simu_fast_vec(param,gridsize,num_sim) for i in 1:n_test]
+println("independet simulation")
+end
 
 
 
@@ -99,19 +112,58 @@ cov_mat_for_vectors(coord_coarse, coord_coarse, param, [0.0,0.0])
 
 #r_gaussian_vec
 #simulate numrep many 1/α [G(s)-G(x0)-γ(s-x0)] 
-num_rep=10
+num_rep=11
 r_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha)
 
 #simulate numrep many exp(1/α[G(s)-G(x0)-γ(s-x0)])
 r_log_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha) 
+#simulate one rep of exp(1/α[G(s)-G(x0)-γ(s-x0)])
+r_log_gaussian(coord_fine,param,row_x0,alpha) 
+
+
+#conditional simulation of exp(1/α[G(s)-G(x0)-γ(s-x0)]) | observation_data(i)./observation_x0(i)
+r_cond_log_gaussian(observation_data[1,:],observation_x0[1], coord_fine,coord_coarse,param,row_x0,alpha) 
+#conditional simulation of exp(1/α[G(s)-G(x0)-γ(s-x0)]) | observation_data./observation_x0 as vector
+#first dim is number of simulations, second is number of wanted simulations, thrisd number of fine grid sites
+r_cond_log_gaussian_vec(observation_data,observation_x0, coord_fine,coord_coarse,param,row_x0,num_rep,alpha)[1][1]
 
 
 
+[r_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha) for j in 1:size(observation_data,1)][1][1]
 
 
+#prior: log of log gaussian and log gaussian:
+x,mu,sigma=7.0,0.0,3.0
+log_likehood_log_gauss_1d(x,mu,sigma)
+log(log_gauss_1d(x,mu,sigma))
 
 
+# Estimation of 1/c via samples
+number_of_exceed = 200
+plots1 = Vector{}(undef, 4)
+i=1
+for N_est_c in [100,1000,10000,40000]
+println("time for $N_est_c:")
+@time(tmp=[l_2_fun(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c) for i in 1:100])
+#pl=scatter(1:100,sort(tmp),label="l_2_fun",title="l_2_fun for $N_est_c samples")
+#hline!(pl, [mean(tmp)],label="Mean of estimates for l_2_fun: $(mean(tmp))",linewidth=3)
+plots1[i]=histogram(tmp,title="$N_est_c samples, mean: $(mean(tmp)) ")
+i=i+1
+end
+plot(plots1..., layout = (2,2),size=(1000,1000))
 
+number_of_exceed = 200
+plots2 = Vector{}(undef, 4)
+i=1
+for N_est_c in [100,1000,10000,40000]
+println("time for $N_est_c:")
+@time(tmp=[l_2_fun_dependent(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c) for i in 1:100])
+#pl=scatter(1:100,sort(tmp),label="l_2_fun",title="l_2_fun for $N_est_c samples")
+#hline!(pl, [mean(tmp)],label="Mean of estimates for l_2_fun: $(mean(tmp))",linewidth=3)
+plots2[i]=histogram(tmp,title="$N_est_c samples, mean: $(mean(tmp)) ")
+i=i+1
+end
+plot(plots2..., layout = (2,2),size=(1000,1000))
 
 
 #EVERYTHING IS PUT TOGETHER IN MCMC function which estimates parameters via MCMC algorithm for observaed data
@@ -155,5 +207,3 @@ import Pkg;Pkg.add("JLD2")
 using JLD2
 repetition=1
 save_object("$(N_MCMC)_simulation_$(gridsize)_grid_0$repetition.jld2", result)
-
-

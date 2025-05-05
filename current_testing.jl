@@ -1,98 +1,117 @@
 include("functions.jl")
+using JLD2
 
+
+(coord_coarse, coord_fine, row_x0,sim_data, observation_data, observation_x0, alpha, param)=load("simulated_observations.jld2")["single_stored_object"]
 
 #inputs
-gridsize=5#lenght of fine grid
+gridsize=size(coord_fine,1)#lenght of fine grid
 N_fine=gridsize^2 #number of fine grid points
-N_coarse=5 #number of weather stations/ conditioning points, obersavation points
-num_sim=1000 #number of simulated realizations
+N_coarse=size(coord_coarse,1) #number of weather stations/ conditioning points, obersavation points
+num_sim=size(observation_data,1) #number of simulated realizations
 
-#true params for simulation
-alpha_true = 2.0
-beta_true=1.5
-c_true=2.0
-param=[ c_true , beta_true]
-alpha=2.0
+#Numbers for simulation based estimation
 
-#Threshold definition as quantile
-#p=0.80
-#threshold= (1-p)^(-1/(alpha_true+1))
-#threshold=0.01
-threshold_quantile=0.7
-
-#MCMC params
-N_MCMC=1000
-param_start=[2.0,1.5]
-alpha_start=2.0
 N_est_c=1000
-N_est_cond=10
-N_burn_in=0
-
-#create grids
-
-
-#safe grid and observation points, also plots if last argument is true
-#(coord_coarse, coord_fine, row_x0)=Create_Grid_and_Observation(gridsize,N_coarse, true)
-(coord_coarse, coord_fine, row_x0)=Create_Grid_and_Observation_on_fine_grid(gridsize,N_coarse, true)
-#gives the nearest fine gride coordinates for each coarse grid obsrvation 
-#last argument is the coarse coordinates rounded to the nearest gridpoint coordinates
-coord_cond_rows=get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
-coord_coarse=coord_fine[coord_cond_rows,:]
+N_est_cond=5
+N_burn_in=1000
 
 
 
-#Simulate data on grid
+coord_x0=coord_fine[row_x0,:]
+coord_coarse_plus=vcat(coord_coarse,coord_x0')
+num_rep=200
+r_gaussian_vec_coarse(coord_coarse_plus,coord_x0,param,row_x0,num_rep,alpha)
+cov_mat=cov_mat_for_vectors(coord_coarse_plus, coord_coarse_plus,param,coord_x0)
+cov_mat-cov_mat'
 
-
-
-#simulate data on all points and reduce it to observation data (  coarse observations)
-#cholmat=chol_mat(vcat(coord_fine, coord_coarse), x->vario(x,param))
-cholmat=chol_mat(coord_fine, x->vario(x,param))
-
-num_runs=1000
-num_sim=1000
-alpha=1
-
-
-
-r_log_gaussian_vec(coord_fine,param,row_x0,5,alpha) 
-
-
-
-
-function simu_specfcts_MCMC(num_runs, alpha, coord_fine,param,row_x0 )
-    tmp = r_log_gaussian_vec(coord_fine,param,row_x0,num_runs+1,alpha) 
-    old_value = tmp[1]
-    #println(old_value)
-   #old_value=r_cond_log_gaussian(observation_data[1,:],observation_x0[1], coord_fine,coord_coarse,param,row_x0)
-    for trial in 1:num_runs
-       #direkt num_obs viele simulations
-            # if (trial==1)
-            #         old_value = tmp[i][trial+1]
-            # end
-            proposal = tmp[trial+1]
-            acceptance_rate = min(1,mean(proposal)^alpha/mean(old_value)^alpha)   
-            if (rand()< acceptance_rate)
-                old_value=proposal
-            end
-            #res_ell_X[i]=observation_x0[i]*mean(old_value)
+function r_gaussian_vec_coarse(coord_coarse_plus,coord_x0,param,row_x0,num_rep,alpha) 
+    N = size(coord_coarse_plus,1)
+    cov_mat = cov_mat_for_vectors(coord_coarse_plus, coord_coarse_plus,param,coord_x0).+1e-6 
+    res = rand(MvNormal([0.0 for i in 1:N],cov_mat),num_rep)
+    trend=vec_vario(param,coord_coarse_plus,coord_coarse_plus[row_x0,:])
+    for i in 1:num_rep
+            res[:,i] = 1/alpha*(res[:,i] - trend .-res[:,end]) #variogram
     end
-    proposal=proposal/mean(proposal)
-    proposal*=(1/(1-rand()))^(1/alpha)
-    #proposal=proposal*(1/(1-rand()))^(1/alpha)
+    res
 end
 
-@time ( res=[simu_specfcts_MCMC_single_sim(num_runs, alpha, coord_fine,param,row_x0 ) for i in 1:num_sim] )
 
 
-@time(sim_data= [simu_specfcts_verynew(coord_fine, x->vario(x,param), cholmat, alpha_true)  for i in 1:num_sim])
-sim_data
 
 
-r_log_gaussian_vec(coord_fine,param,row_x0,1,alpha)[1]
-r_cond_log_gaussian_vec(coarse_observation,observation_x0, coord_fine,coord_coarse,param,row_x0,num_rep,alpha) #coord_x0 (hier c egal)
-   
-@time (simu_specfcts_MCMC_multisim(1000,1000,  alpha, coord_fine,param,row_x0 ))
 
-a=[2, 2]
-a*=7
+
+#DIFFERENCE BETWEEN DEPENDEND AND INDEPENDENT SIMULATION IN FBM SIMULATION
+# Circulant embedding testing will follow in seperate file
+n_test=100
+num_sim=100
+@time begin
+tmp=[mean(FBM_simu_fast_vec_dependent(param,gridsize,num_sim)) for i in 1:n_test]
+println("dependend simulation")
+end
+
+
+@time begin
+tmp=[mean(FBM_simu_fast_vec(param,gridsize,num_sim)) for i in 1:n_test]
+println("independet simulation")
+end
+
+
+# Estimation of 1/c via samples
+number_of_exceed = 200
+plots1 = Vector{}(undef, 4)
+i=1
+for N_est_c in [10,100,1000,5000]
+println("time for $N_est_c:")
+@time(tmp=[c_estimation(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c) for i in 1:100])
+#pl=scatter(1:100,sort(tmp),label="l_2_fun",title="l_2_fun for $N_est_c samples")
+#hline!(pl, [mean(tmp)],label="Mean of estimates for l_2_fun: $(mean(tmp))",linewidth=3)
+plots1[i]=histogram(tmp,title="$N_est_c samples, mean: $(mean(tmp)) ")
+i=i+1
+end
+combined=plot(plots1..., layout = (2,2),size=(1000,1000))
+savefig(combined, "c_estimation_independent.pdf")
+
+number_of_exceed = 200
+plots2 = Vector{}(undef, 4)
+i=1
+for N_est_c in [10,100,1000,5000]
+println("time for $N_est_c:")
+@time(tmp=[c_estimation_dependent(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c) for i in 1:100])
+#pl=scatter(1:100,sort(tmp),label="l_2_fun",title="l_2_fun for $N_est_c samples")
+#hline!(pl, [mean(tmp)],label="Mean of estimates for l_2_fun: $(mean(tmp))",linewidth=3)
+plots2[i]=histogram(tmp,title="$N_est_c samples, mean: $(mean(tmp)) ")
+i=i+1
+end
+combined2=plot(plots2..., layout = (2,2),size=(1000,1000))
+savefig(combined2, "c_estimation_dependent.pdf")
+
+# Estimation of 1/c via samples
+number_of_exceed = 200
+plots1 = Vector{}(undef, 4)
+i=1
+for N_est_c in [10,100,1000,5000]
+println("time for $N_est_c:")
+@time(tmp=[l_2_fun(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c) for i in 1:100])
+#pl=scatter(1:100,sort(tmp),label="l_2_fun",title="l_2_fun for $N_est_c samples")
+#hline!(pl, [mean(tmp)],label="Mean of estimates for l_2_fun: $(mean(tmp))",linewidth=3)
+plots1[i]=histogram(tmp,title="$N_est_c samples, mean: $(mean(tmp)) ")
+i=i+1
+end
+combined=plot(plots1..., layout = (2,2),size=(1000,1000))
+savefig(combined, "l2_fun_independent.pdf")
+
+number_of_exceed = 200
+plots2 = Vector{}(undef, 4)
+i=1
+for N_est_c in [10,100,1000,10000]
+println("time for $N_est_c:")
+@time(tmp=[l_2_fun_dependent(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c) for i in 1:100])
+#pl=scatter(1:100,sort(tmp),label="l_2_fun",title="l_2_fun for $N_est_c samples")
+#hline!(pl, [mean(tmp)],label="Mean of estimates for l_2_fun: $(mean(tmp))",linewidth=3)
+plots2[i]=histogram(tmp,title="$N_est_c samples, mean: $(mean(tmp)) ")
+i=i+1
+end
+plot(plots2..., layout = (2,2),size=(1000,1000))
+savefig(combined, "l_2_fun_dependent.pdf")
