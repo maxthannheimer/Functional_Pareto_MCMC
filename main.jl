@@ -25,7 +25,7 @@
     
 
     #MCMC params
-    N_MCMC=8000
+    N_MCMC=1000
     param_start=[2.0,1.5]
     alpha_start=2.0
     N_est_c=5000
