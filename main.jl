@@ -62,9 +62,8 @@
 
     #run MCMC algorithm
 
-    println(param_start)
    n_trial_print=500 #print every n-th step
-   @time (result1= MCMC(N_MCMC,observation_data,observation_x0,threshold_quantile,threshold_method, alpha_start, coord_fine,coord_coarse,param_start,row_x0,n_trial_print,N_est_c,N_cond_sim))
+   #@time (result1= MCMC(N_MCMC,observation_data,observation_x0,threshold_quantile,threshold_method, alpha_start, coord_fine,coord_coarse,param_start,row_x0,n_trial_print,N_est_c,N_cond_sim))
    
    param_start=[2.0,1.5]
    alpha_start=2.0

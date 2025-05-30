@@ -3,7 +3,8 @@ using LinearAlgebra
 using Random, Distributions
 using Plots
 using FFTW
-
+using JLD2
+using Printf
 
 # creating the grid of fine points and the coarse observation points
 # boolean plot makes plot of grid if true
@@ -46,6 +47,32 @@ function Create_Grid_and_Observation_on_fine_grid(gridsize,N_coarse, plot::Bool=
     coord_cond_rows = coord_sample[2:end]
     coord_coarse = coord_fine[coord_cond_rows,:]
     x0 = coord_sample[1]
+
+    if plot
+        t=scatter(coord_fine[:,1],coord_fine[:,2], label="Fine Grid Simulations",color=:red,alpha=0.4)
+        scatter!(coord_coarse[:,1],coord_coarse[:,2],label="Coarse Observations",color=:purple)
+        scatter!([coord_fine[x0,1]],[coord_fine[x0,2]],label="", color=:purple)
+        title!("Observation and Simulation Points")
+        display(t)
+    end
+    return coord_coarse, coord_fine, x0
+end
+
+
+
+#create a 7 x 7 grid with 9 points as observations nicely distributed
+function Create_Grid_and_Observation_seven_times_seven( plot::Bool=false )
+    coord_fine=ones(gridsize*gridsize,2)
+    for x in 0:(gridsize-1) 
+        for y in 0:(gridsize-1)
+            coord_fine[y+x*gridsize+1,2]=x/(gridsize)
+            coord_fine[y+x*gridsize+1,1]=y/(gridsize)
+        end
+    end
+    #coord_sample = sample(1:(gridsize*gridsize), N_coarse+1; replace=false)
+    coord_cond_rows = [9,11,13,23,27,37,39,41]
+    coord_coarse = coord_fine[coord_cond_rows,:]
+    x0 = 25 # index of the normalization point
 
     if plot
         t=scatter(coord_fine[:,1],coord_fine[:,2], label="Fine Grid Simulations",color=:red,alpha=0.4)
@@ -164,7 +191,7 @@ function simu_specfcts_MCMC(num_runs, alpha, coord_fine,param,row_x0 )
             end
     end
     #normalize sample and multiply pareto intesity to get pareto process sample
-    old_value=old_value/mean(old_value)
+    old_value = old_value/mean(old_value)
     old_value*=(1/(1-rand()))^(1/alpha)
     #proposal=proposal*(1/(1-rand()))^(1/alpha)
 end
@@ -365,7 +392,6 @@ function FBM_simu_fast_vec(param,gridsize,num_sim)
     #eig_vals=eig_vals.*(eig_vals .>= 0)
     eig_vals=sqrt.(eig_vals)
     res1=[Vector{Float64}(undef,gridsize*gridsize) for i in 1:num_sim]
-    #res2=[Matrix{Float64}(undef,gridsize,gridsize) for i in 1:num_sim]
     
     for trial in 1:num_sim
 
@@ -525,6 +551,18 @@ function r_gaussian_vec(coord_fine,param,row_x0,num_rep,alpha)
     res
 end
 
+#simulate numrep many 1/α [G(s)-G(x0)-γ(s-x0)] on coarse grid
+function r_gaussian_vec_coarse(coord_coarse_plus,coord_x0,param,num_rep,alpha) 
+    N = size(coord_coarse_plus,1)
+    cov_mat = cov_mat_for_vectors(coord_coarse_plus, coord_coarse_plus,param,coord_x0).+1e-6 
+    res = rand(MvNormal([0.0 for i in 1:N],cov_mat),num_rep)'
+    trend=vec_vario(param,coord_coarse_plus,coord_coarse_plus[end,:])
+    for i in 1:num_rep
+            res[i,:] = 1/alpha*(res[i,:] - trend .-res[i,end]) #variogram
+    end
+    res
+end
+
 #conditional simulation of exp(1/α[G(s)-G(x0)-γ(s-x0)]) | observation_data(i)./observation_x0(i)
 function r_cond_log_gaussian(coarse_observation,observation_x0, coord_fine,coord_coarse,param,row_x0,alpha) #coord_x0 (hier c egal)
     log_normalized_coarse_observation=log.(coarse_observation./observation_x0)
@@ -615,6 +653,32 @@ function exceed_cond_sim(num_runs,num_obs,observation_data,observation_x0,thresh
     end
 end
 
+function exceed_cond_sim_approx(num_obs,observation_data,observation_x0,threshold )
+#    tmp = r_cond_log_gaussian_vec(observation_data, observation_x0, coord_fine, coord_coarse,param,row_x0,num_runs+1,alpha)
+    res_ell_X = [0.0 for i in 1:num_obs] 
+
+   #old_value=r_cond_log_gaussian(observation_data[1,:],observation_x0[1], coord_fine,coord_coarse,param,row_x0)
+   for i in 1:num_obs #direkt num_obs viele simulations 
+        #old_value = tmp[i][1]
+        #for trial in 1:num_runs
+         #   proposal = tmp[i][trial+1]
+          #  acceptance_rate = min(1,mean(proposal)^alpha/mean(old_value)^alpha)   
+           # if (rand()< acceptance_rate)
+             #   old_value=proposal
+            #end
+        #end
+        res_ell_X[i]=mean(observation_data[i,:]) #add x0
+    end
+    if sum(res_ell_X.>threshold)==0
+        println("not a single threshold exceedance")
+    else
+        #likelihood calculation and param updates
+        #find all threshold exccedances and calculate the log of them
+        ind=findall(res_ell_X.>threshold)
+        (observation_data[ind,:],observation_x0[ind])
+    end
+end
+
 function exceed_cond_sim_quantile(num_runs,num_obs,observation_data,observation_x0,threshold_quantile, alpha, coord_fine,coord_coarse,param,row_x0 )
     tmp = r_cond_log_gaussian_vec(observation_data, observation_x0, coord_fine, coord_coarse,param,row_x0,num_runs+1,alpha)
     res_ell_X = [0.0 for i in 1:num_obs] 
@@ -672,6 +736,17 @@ function l_1_fun(coord_fine,coord_coarse,coarse_observation,param, observation_x
     sum([(log_d_gaussian(trend ,cov_mat_coarse_inv , alpha*log.(coarse_observation[i,:]./observation_x0[i]), inv_determinant))+log(alpha)*length(trend) for i in 1:size(coarse_observation,1)])
 end
 
+function l_1_fun_approx(coord_coarse_plus,coarse_observation,param, observation_x0,alpha)
+    #N= size(coord_coarse_plus,1)
+    #trend=vec_vario(param,coord_coarse_plus,coord_coarse_plus[end,:])
+    trend = -vec_vario(param,coord_coarse_plus[1:(end-1),:],coord_coarse_plus[end,:])
+    cov_mat_coarse_inv= inv(cov_mat_for_vectors(coord_coarse_plus[1:(end-1),:],coord_coarse_plus[1:(end-1),:],  param, coord_coarse_plus[end,:])) #hier 
+    inv_determinant = det(cov_mat_coarse_inv)
+    #trend = -vec_vario(param,coord_fine[coord_cond_rows,:],coord_fine[row_x0,:])
+    sum([(log_d_gaussian(trend ,cov_mat_coarse_inv , alpha*log.(coarse_observation[i,:]./observation_x0[i]), inv_determinant))+log(alpha)*length(trend) for i in 1:size(coarse_observation,1)])
+end
+
+
 function l_1_fun_alternative(coord_fine,coord_coarse,coarse_observation,param, observation_x0, row_x0, alpha)
     gridsize = Int(sqrt(size(coord_fine,1)))
     coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.* gridsize)./gridsize)
@@ -692,6 +767,15 @@ end
 #         )^(alpha) for i in 1: N_est_c]))  
 #      # minus for 1/c_l (in log)
 #  end
+
+    
+function l_2_fun_approx(coord_coarse_plus,coord_x0,param,number_of_exceed,alpha,N_est_c)#(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c)
+    tmp= exp.(r_gaussian_vec_coarse(coord_coarse_plus,coord_x0,param,N_est_c,alpha)) 
+    #tmp = r_log_gaussian_vec(coord_fine,param,row_x0, N_est_c,alpha) 
+    -number_of_exceed * log(mean([mean(tmp[i,:] 
+        )^(alpha) for i in 1:N_est_c]))  
+     # minus for 1/c_l (in log)
+ end
 
  function l_2_fun(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c)
     tmp = r_log_gaussian_vec(coord_fine,param,row_x0, N_est_c,alpha) 
@@ -715,6 +799,13 @@ end
         )^(alpha) for i in 1:N_est_c]))  
      # minus for 1/c_l (in log)
  end
+
+function l_2_fun_dependent_no_number_of_exceed(coord_fine, param,row_x0,alpha,N_est_c)
+    tmp = r_log_gaussian_vec_dependent(coord_fine,param,row_x0, N_est_c,alpha) 
+    -log(mean([mean( tmp[i] 
+        )^(alpha) for i in 1:N_est_c]))  
+     # minus for 1/c_l (in log)
+end
 
  function c_estimation_dependent(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c)
     tmp = r_log_gaussian_vec_dependent(coord_fine,param,row_x0, N_est_c,alpha) 
@@ -812,12 +903,250 @@ function parameter_update(beta_old,c_old,alpha_old,beta_new,c_new,alpha_new,log_
         return(beta_old,c_old,alpha_old,log_likelihood_old)
     end
 end
+function parameter_update(beta_old,c_old,alpha_old,beta_new,c_new,alpha_new,log_likelihood_old,log_likelihood_new,l2_no_exceed_old,l2_no_exceed_new)
+    #calculate MCMC acceptance rate a
+    if log_likelihood_new<log_likelihood_old
+        a=exp(log_likelihood_new-log_likelihood_old)
+    else
+        a=1
+    end
+    rand_sample=rand()
+    #accept new value with probability set as acceptance rate a
+    if (rand_sample<a)
+        #we update param aka return the new ones
+        return(beta_new,c_new,alpha_new,log_likelihood_new,l2_no_exceed_new)
+    else
+        #else we just keep the old values and return them
+        return(beta_old,c_old,alpha_old,log_likelihood_old,l2_no_exceed_old)
+    end
+end
 
 
-
-
-#MCMC Algorithm
+# MCMC Algorithm with Dependent 1/c estimation
 function MCMC(N_MCMC,observation_data,observation_x0,threshold,threshold_method, alpha, coord_fine,coord_coarse,param,row_x0,n_trial_print,N_est_c,N_cond_sim)
+    if threshold_method=="quantile"
+        threshold_quantile = threshold
+    elseif !(threshold_method=="fixed" || threshold_method=="all_exceed")
+        println("threshold_method not defined, please use fixed or quantile or all_exceed")
+        Base._throw_argerror("threshold_method not defined, please use fixed or quantile or all_exceed")
+    end
+    num_obs=size(observation_data,1)
+
+    par_beta_vec  = repeat([param[2]],N_MCMC+1)
+    par_c_vec = [param[1] for i=1:N_MCMC+1]
+    par_alpha_vec = [alpha for i=1:N_MCMC+1]
+    threshold_vec = [threshold for i=1:N_MCMC]
+    number_exceed_vec = [-1 for i=1:N_MCMC]
+    log_likelihood_vec = [0.0 for i=1:N_MCMC]
+    for trial in 1:N_MCMC
+        #println("current trial: $trial and current param: $param")
+        param[2]=par_beta_vec[trial]
+        param[1]=par_c_vec[trial]
+        alpha=par_alpha_vec[trial]
+        
+        #quantile threshold, changes threshold every trial with fixed quantile threshold_quantile
+        if threshold_method=="quantile"
+            (modified_observation, modified_observation_x0,threshold) = exceed_cond_sim_quantile(N_cond_sim,num_obs,observation_data,observation_x0,threshold_quantile, alpha, coord_fine,coord_coarse,param,row_x0 )
+        #fixed threshold, threshold exceedances are evaluated every step with changing parameters
+        elseif threshold_method=="fixed"
+            (modified_observation, modified_observation_x0) = exceed_cond_sim(N_cond_sim,num_obs,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
+        #fixed threshold, everything is an eceedance
+        elseif threshold_method=="all_exceed"
+            (modified_observation, modified_observation_x0) = (observation_data,observation_x0)
+        end
+        #safe threshold for comparison
+        threshold_vec[trial]=threshold
+        #eceed sim
+        #(modified_observation, modified_observation_x0,threshold) = exceed_cond_sim_quantile(20,num_sim,observation_data,observation_x0,threshold_quantile, alpha, coord_fine,coord_coarse,param,row_x0 )
+        #(modified_observation, modified_observation_x0) = exceed_cond_sim(N_cond_sim,num_obs,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
+
+        
+        #fixed threshold, all exceed 
+        #threshold=1.0
+        #(modified_observation, modified_observation_x0) = (observation_data,observation_x0)
+        
+
+        #gridsize = Int(sqrt(size(coord_fine,1)))
+        #coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
+        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
+        l2=l_2_fun_dependent_no_number_of_exceed(coord_fine, param,row_x0,alpha,N_est_c) * size(modified_observation,1) #number of exceedances
+        #l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
+        l3=l_3_fun(modified_observation_x0, alpha, threshold)  
+        prior=log_likehood_log_gauss_1d(param[1],0.0,2.0)+log_likehood_log_gauss_1d(alpha,0.0,2.0)
+        log_likelihood_old=sum([l1,l2,l3,prior])
+        #new param 
+
+        #new params
+        par_beta_old = param[2]
+        par_c_old=param[1]
+        alpha_old=alpha
+        #propose new params
+        eps_beta=0.05
+        eps_c=0.05
+        eps_alpha=0.05
+
+
+        param[2]=uniform_proposal(par_beta_old,eps_beta,0.0,2.0)
+        par_beta=param[2]
+        param[1]=gaussian_proposal(par_c_old,eps_c)
+        #param[1]=uniform_proposal(par_c_old,eps_c,0.0,10.0)
+        par_c =param[1]
+        alpha=gaussian_proposal(alpha_old,eps_alpha)
+        #alpha=uniform_proposal(alpha_old,eps_alpha,0.0,10.0)
+
+
+        #calculate new log likelihood
+        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
+        #l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
+        l2=l_2_fun_dependent_no_number_of_exceed(coord_fine, param,row_x0,alpha,N_est_c) * size(modified_observation,1) #number of exceedances
+        l3=l_3_fun(modified_observation_x0, alpha, threshold)  
+        prior=log_likehood_log_gauss_1d(param[1],0.0,2.0)+log_likehood_log_gauss_1d(alpha,0.0,2.0)
+        log_likelihood_new =sum([l1,l2,l3,prior])  
+
+        #MCMC update of param according to acceptance rate calculated with old and new likelihoods
+        #param[2],log_likelihood_old=parameter_update(par_beta_old,par_beta,log_likelihood_old,log_likelihood_new)
+        param[2],param[1],alpha,log_likelihood_old =parameter_update(par_beta_old,par_c_old,alpha_old,par_beta,par_c,alpha,log_likelihood_old,log_likelihood_new)
+        #safe param after MCMC step
+        par_beta_vec[trial+1]=param[2]
+        par_c_vec[trial+1]=param[1]  
+        par_alpha_vec[trial+1]=alpha 
+        number_exceed_vec[trial]=size(modified_observation,1)
+        log_likelihood_vec[trial]=log_likelihood_old
+        #just print every n_trial_print's trial number to see how fast programme runs
+        if trial%n_trial_print==0
+            println("Trial: $trial")
+            println("Number of exceedance: $(size(modified_observation,1)) " )
+            println("Threshold: $threshold")
+            println("alpha: $alpha")
+            println("c: $(param[1])")
+            println("beta: $(param[2])")
+        end
+    end
+    Dict( "beta" => par_beta_vec, "c" => par_c_vec, "alpha" => par_alpha_vec, "threshold" => threshold_vec, "Number of exceedance"=> number_exceed_vec, "log_likelihood" => log_likelihood_vec)
+end  
+
+# MCMC Algorithm with Dependent 1/c estimation
+function MCMC_more_info(N_MCMC,observation_data,observation_x0,threshold,threshold_method, alpha, coord_fine,coord_coarse,param,row_x0,n_trial_print,N_est_c,N_cond_sim)
+    if threshold_method=="quantile"
+        threshold_quantile = threshold
+    elseif !(threshold_method=="fixed" || threshold_method=="all_exceed")
+        println("threshold_method not defined, please use fixed or quantile or all_exceed")
+        Base._throw_argerror("threshold_method not defined, please use fixed or quantile or all_exceed")
+    end
+    num_obs=size(observation_data,1)
+
+    par_beta_vec  = repeat([param[2]],N_MCMC+1)
+    par_c_vec = [param[1] for i=1:N_MCMC+1]
+    par_alpha_vec = [alpha for i=1:N_MCMC+1]
+    threshold_vec = [threshold for i=1:N_MCMC]
+    number_exceed_vec = [-1 for i=1:N_MCMC]
+    l2_no_number_of_exceed_vec = repeat( [l_2_fun_dependent_no_number_of_exceed(coord_fine, param,row_x0,alpha,N_est_c)],N_MCMC+1)
+    for trial in 1:N_MCMC
+        #println("current trial: $trial and current param: $param")
+        param[2]=par_beta_vec[trial]
+        param[1]=par_c_vec[trial]
+        alpha=par_alpha_vec[trial]
+        
+        #quantile threshold, changes threshold every trial with fixed quantile threshold_quantile
+        if threshold_method=="quantile"
+            (modified_observation, modified_observation_x0,threshold) = exceed_cond_sim_quantile(N_cond_sim,num_obs,observation_data,observation_x0,threshold_quantile, alpha, coord_fine,coord_coarse,param,row_x0 )
+        #fixed threshold, threshold exceedances are evaluated every step with changing parameters
+        elseif threshold_method=="fixed"
+            (modified_observation, modified_observation_x0) = exceed_cond_sim(N_cond_sim,num_obs,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
+        #fixed threshold, everything is an eceedance
+        elseif threshold_method=="all_exceed"
+            (modified_observation, modified_observation_x0) = (observation_data,observation_x0)
+        end
+        #safe threshold for comparison
+        threshold_vec[trial]=threshold
+        #eceed sim
+        #(modified_observation, modified_observation_x0,threshold) = exceed_cond_sim_quantile(20,num_sim,observation_data,observation_x0,threshold_quantile, alpha, coord_fine,coord_coarse,param,row_x0 )
+        #(modified_observation, modified_observation_x0) = exceed_cond_sim(N_cond_sim,num_obs,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
+
+        
+        #fixed threshold, all exceed 
+        #threshold=1.0
+        #(modified_observation, modified_observation_x0) = (observation_data,observation_x0)
+        
+
+        #gridsize = Int(sqrt(size(coord_fine,1)))
+        #coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
+        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
+        l2=l2_no_number_of_exceed_vec[trial] * size(modified_observation,1) #number of exceedances
+        #l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
+        l3=l_3_fun(modified_observation_x0, alpha, threshold)  
+        prior=log_likehood_log_gauss_1d(param[1],0.0,2.0)+log_likehood_log_gauss_1d(alpha,0.0,2.0)
+        log_likelihood_old=sum([l1,l2,l3,prior])
+
+        println("log_likelihood_old: $log_likelihood_old")
+        println("l1: $l1")
+        println("l2: $l2")
+        println("l3: $l3")
+        println("l2_no_number_of_exceed: $(l2_no_number_of_exceed_vec[trial])")
+        println("prior: $prior")
+    
+        #new param 
+
+        #new params
+        par_beta_old = param[2]
+        par_c_old=param[1]
+        alpha_old=alpha
+        #propose new params
+        eps_beta=0.05
+        eps_c=0.05
+        eps_alpha=0.05
+
+
+        param[2]=uniform_proposal(par_beta_old,eps_beta,0.0,2.0)
+        par_beta=param[2]
+        param[1]=gaussian_proposal(par_c_old,eps_c)
+        #param[1]=uniform_proposal(par_c_old,eps_c,0.0,10.0)
+        par_c =param[1]
+        alpha=gaussian_proposal(alpha_old,eps_alpha)
+        #alpha=uniform_proposal(alpha_old,eps_alpha,0.0,10.0)
+
+
+        #calculate new log likelihood
+        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
+        #l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
+        l2_no_number_of_exceed = l_2_fun_dependent_no_number_of_exceed(coord_fine, param,row_x0,alpha,N_est_c)
+        l2=l2_no_number_of_exceed * size(modified_observation,1) #number of exceedances
+        l3=l_3_fun(modified_observation_x0, alpha, threshold)  
+        prior=log_likehood_log_gauss_1d(param[1],0.0,2.0)+log_likehood_log_gauss_1d(alpha,0.0,2.0)
+        log_likelihood_new =sum([l1,l2,l3,prior])  
+        println("log_likelihood_new: $log_likelihood_new")
+        println("l1: $l1")
+        println("l2: $l2")
+        println("l3: $l3")
+        println("l2_no_number_of_exceed: $l2_no_number_of_exceed")
+        println("prior: $prior")
+        println("rate: $(log_likelihood_new-log_likelihood_old)")
+
+        #MCMC update of param according to acceptance rate calculated with old and new likelihoods
+        #param[2],log_likelihood_old=parameter_update(par_beta_old,par_beta,log_likelihood_old,log_likelihood_new)
+        param[2],param[1],alpha,log_likelihood_old, l2_no_number_of_exceed =parameter_update(par_beta_old,par_c_old,alpha_old,par_beta,par_c,alpha,log_likelihood_old,log_likelihood_new,l2_no_number_of_exceed_vec[trial],l2_no_number_of_exceed)
+        #safe param after MCMC step
+        par_beta_vec[trial+1]=param[2]
+        par_c_vec[trial+1]=param[1]  
+        par_alpha_vec[trial+1]=alpha 
+        number_exceed_vec[trial]=size(modified_observation,1)
+        l2_no_number_of_exceed_vec[trial+1]= l2_no_number_of_exceed
+        #just print every n_trial_print's trial number to see how fast programme runs
+        if trial%n_trial_print==0
+            println("Trial: $trial")
+            println("Number of exceedance: $(size(modified_observation,1)) " )
+            println("Threshold: $threshold")
+            println("alpha: $alpha")
+            println("beta: $(param[2])")
+            println("c: $(param[1])")
+            println("l2_no_number_of_exceed: $l2_no_number_of_exceed")
+        end
+    end
+    Dict( "beta" => par_beta_vec, "c" => par_c_vec, "alpha" => par_alpha_vec, "threshold" => threshold_vec, "Number of exceedance"=> number_exceed_vec, "l2_no_number_of_exceed"=> l2_no_number_of_exceed_vec)
+end  
+
+#Independent 1/c estimation MCMC Algorithm
+function MCMC_indep_c_est(N_MCMC,observation_data,observation_x0,threshold,threshold_method, alpha, coord_fine,coord_coarse,param,row_x0,n_trial_print,N_est_c,N_cond_sim)
     if threshold_method=="quantile"
         threshold_quantile = threshold
     elseif !(threshold_method=="fixed" || threshold_method=="all_exceed")
@@ -864,7 +1193,7 @@ function MCMC(N_MCMC,observation_data,observation_x0,threshold,threshold_method,
         l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
         l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
         l3=l_3_fun(modified_observation_x0, alpha, threshold)  
-        prior=log_likehood_log_gauss_1d(param[1],0.0,3.0)+log_likehood_log_gauss_1d(alpha,0.0,3.0)
+        prior=log_likehood_log_gauss_1d(param[1],0.0,2.0)+log_likehood_log_gauss_1d(alpha,0.0,2.0)
         log_likelihood_old=sum([l1,l2,l3,prior])
         #new param 
 
@@ -891,7 +1220,7 @@ function MCMC(N_MCMC,observation_data,observation_x0,threshold,threshold_method,
         l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
         l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
         l3=l_3_fun(modified_observation_x0, alpha, threshold)  
-        prior=log_likehood_log_gauss_1d(param[1],0.0,3.0)+log_likehood_log_gauss_1d(alpha,0.0,3.0)
+        prior=log_likehood_log_gauss_1d(param[1],0.0,2.0)+log_likehood_log_gauss_1d(alpha,0.0,2.0)
         log_likelihood_new =sum([l1,l2,l3,prior])  
 
         #MCMC update of param according to acceptance rate calculated with old and new likelihoods
@@ -913,118 +1242,40 @@ function MCMC(N_MCMC,observation_data,observation_x0,threshold,threshold_method,
     Dict( "beta" => par_beta_vec, "c" => par_c_vec, "alpha" => par_alpha_vec, "threshold" => threshold_vec, "Number of exceedance"=> number_exceed_vec)
 end  
 
-#MCMC Algorithm
-function MCMC_old(N_MCMC,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0,n_trial_print,N_est_c)
 
+#MCMC Algorithm using approx risk functional
+function MCMC_approx(N_MCMC,observation_data,observation_x0,threshold, alpha, coord_x0,coord_coarse,param,n_trial_print,N_est_c)
     num_obs=size(observation_data,1)
-
+    coord_coarse_plus=vcat(coord_coarse,coord_x0')
     par_beta_vec  = repeat([param[2]],N_MCMC+1)
     par_c_vec = [param[1] for i=1:N_MCMC+1]
     par_alpha_vec = [alpha for i=1:N_MCMC+1]
-    for trial in 1:N_MCMC
-        #println("current trial: $trial and current param: $param")
-        param[2]=par_beta_vec[trial]
-        param[1]=par_c_vec[trial]
-        alpha=par_alpha_vec[trial]
-        par_beta_old=par_beta_vec[trial]
-        par_c_old=par_c_vec[trial]
-        #fixed param
-        (modified_observation, modified_observation_x0) = exceed_cond_sim(10,num_sim,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
-
-        #fixed param
-        #gridsize = Int(sqrt(size(coord_fine,1)))
-        #coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
-        l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold)  
-        log_likelihood_old=sum([l1,l2,l3])
-        #new param c
-
-        #new param beta
-        par_beta_old=param[2]
-        #propose new param beta
-        eps_beta=0.05
-        param[2]=uniform_proposal(par_beta_old,eps_beta,0.0,2.0)
-        par_beta=param[2]
-
-        #calculate new log likelihood
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
-        l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold)   
-        log_likelihood_new=sum([l1,l2,l3])  
-
-        #MCMC update of param according to acceptance rate calculated with old and new likelihoods
-        param[2],log_likelihood_old=parameter_update_old(par_beta_old,par_beta,log_likelihood_old,log_likelihood_new)
-        #safe param after MCMC step
-        par_beta_vec[trial+1]=param[2]
-        
-        #new param c
-        par_c_old=param[1]
-        #propose new param c
-        eps_c=0.1
-        param[1]=uniform_proposal(par_c_old,eps_c,0.0,10.0)
-        par_c=param[1]
-        #calculate new log likelihood
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
-        l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold)   
-        log_likelihood_new=sum([l1,l2,l3])  
-        #MCMC update of param according to acceptance rate calculated with old and new likelihoods
-        param[1],log_likelihood_old=parameter_update_old(par_c_old,par_c,log_likelihood_old,log_likelihood_new)
-        #safe param c after MCMC step
-        par_c_vec[trial+1]=param[1]     
-
-        #new param alpha
-        alpha_old=alpha
-        #propose new alpha
-        eps_alpha=0.1
-        alpha=uniform_proposal(alpha_old,eps_alpha,0.0,10.0)
-        #calculate new log likelihood
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
-        l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold) 
-        log_likelihood_new=sum([l1,l2,l3])  
-        #MCMC update of param according to acceptance rate calculated with old and new likelihoods
-        alpha,log_likelihood_old=parameter_update_old(alpha_old,alpha,log_likelihood_old,log_likelihood_new)
-        #safe param c after MCMC step
-        par_alpha_vec[trial+1]=alpha 
-        #just print every n_trial_print's trial number to see how fast programme runs
-        if trial%n_trial_print==0
-            println(trial)
-        end
-    end
-    Dict( "beta" => par_beta_vec, "c" => par_c_vec, "alpha" => par_alpha_vec)
-end  
-
-#MCMC Algorithm
-function MCMC_fixed_alpha(N_MCMC,observation_data,observation_x0,threshold_quantile, alpha, coord_fine,coord_coarse,param,row_x0,n_trial_print,N_est_c)
-
-    num_obs=size(observation_data,1)
-
-    par_beta_vec  = repeat([param[2]],N_MCMC+1)
-    par_c_vec = [param[1] for i=1:N_MCMC+1]
-    par_alpha_vec = [alpha for i=1:N_MCMC+1]
+    threshold_vec = [threshold for i=1:N_MCMC]
+    number_exceed_vec = [-1 for i=1:N_MCMC]
     for trial in 1:N_MCMC
         #println("current trial: $trial and current param: $param")
         param[2]=par_beta_vec[trial]
         param[1]=par_c_vec[trial]
         alpha=par_alpha_vec[trial]
         
-        #eceed sim
-        #(modified_observation, modified_observation_x0,threshold) = exceed_cond_sim_quantile(20,num_sim,observation_data,observation_x0,threshold_quantile, alpha, coord_fine,coord_coarse,param,row_x0 )
-        
-        
-        #fixed threshold, all exceed are accepted, no need for exceed sim
-        threshold=1.0
-        (modified_observation, modified_observation_x0) = (observation_data,observation_x0)
-        
+#fixed threshold, threshold exceedances are evaluated every step with changing parameters WITH THE APPROXIMATE RISK FUNCTIONAL
+
+        (modified_observation, modified_observation_x0)=exceed_cond_sim_approx(num_obs,observation_data,observation_x0,threshold)  
+        # exceed_cond_sim_approx(N_cond_sim,num_obs,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0 )
+                    
+        #safe threshold for comparison
+        threshold_vec[trial]=threshold
 
         #gridsize = Int(sqrt(size(coord_fine,1)))
         #coord_cond_rows = get_common_rows_indices(coord_fine,floor.(coord_coarse.*gridsize)./gridsize)
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
-        l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
+
+        #l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
+        l1=l_1_fun_approx(coord_coarse_plus,modified_observation,param, modified_observation_x0,alpha)
+        #l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
+        l2 = l_2_fun_approx(coord_coarse_plus,coord_x0,param,size(modified_observation,1),alpha,N_est_c)
         l3=l_3_fun(modified_observation_x0, alpha, threshold)  
-        log_likelihood_old=sum([l1,l2,l3])
+        prior=log_likehood_log_gauss_1d(param[1],0.0,2.0)+log_likehood_log_gauss_1d(alpha,0.0,2.0)
+        log_likelihood_old=sum([l1,l2,l3,prior])
         #new param 
 
         #new params
@@ -1034,7 +1285,7 @@ function MCMC_fixed_alpha(N_MCMC,observation_data,observation_x0,threshold_quant
         #propose new params
         eps_beta=0.05
         eps_c=0.05
-        #eps_alpha=0.05
+        eps_alpha=0.05
 
 
         param[2]=uniform_proposal(par_beta_old,eps_beta,0.0,2.0)
@@ -1042,15 +1293,18 @@ function MCMC_fixed_alpha(N_MCMC,observation_data,observation_x0,threshold_quant
         param[1]=gaussian_proposal(par_c_old,eps_c)
         #param[1]=uniform_proposal(par_c_old,eps_c,0.0,10.0)
         par_c =param[1]
-        #alpha=gaussian_proposal(alpha_old,eps_alpha)
+        alpha=gaussian_proposal(alpha_old,eps_alpha)
         #alpha=uniform_proposal(alpha_old,eps_alpha,0.0,10.0)
 
 
         #calculate new log likelihood
-        l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
-        l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
-        l3=l_3_fun(modified_observation_x0, alpha, threshold)  
-        log_likelihood_new =sum([l1,l2,l3])  
+        #l1=l_1_fun(coord_fine,coord_coarse,modified_observation,param, modified_observation_x0, row_x0,alpha)
+        l1=l_1_fun_approx(coord_coarse_plus,modified_observation,param, modified_observation_x0,alpha)
+        #l2= l_2_fun(coord_fine, param,row_x0, size(modified_observation,1),alpha,N_est_c)
+        l2 = l_2_fun_approx(coord_coarse_plus,coord_x0,param,size(modified_observation,1),alpha,N_est_c)
+        l3=l_3_fun(modified_observation_x0, alpha, threshold) 
+        prior=log_likehood_log_gauss_1d(param[1],0.0,2.0)+log_likehood_log_gauss_1d(alpha,0.0,2.0)
+        log_likelihood_new =sum([l1,l2,l3,prior])  
 
         #MCMC update of param according to acceptance rate calculated with old and new likelihoods
         #param[2],log_likelihood_old=parameter_update(par_beta_old,par_beta,log_likelihood_old,log_likelihood_new)
@@ -1059,6 +1313,7 @@ function MCMC_fixed_alpha(N_MCMC,observation_data,observation_x0,threshold_quant
         par_beta_vec[trial+1]=param[2]
         par_c_vec[trial+1]=param[1]  
         par_alpha_vec[trial+1]=alpha 
+        number_exceed_vec[trial]=size(modified_observation,1)
         #just print every n_trial_print's trial number to see how fast programme runs
         if trial%n_trial_print==0
             println("Trial: $trial")
@@ -1067,5 +1322,54 @@ function MCMC_fixed_alpha(N_MCMC,observation_data,observation_x0,threshold_quant
             println("alpha: $alpha")
         end
     end
-    Dict( "beta" => par_beta_vec, "c" => par_c_vec, "alpha" => par_alpha_vec)
-end 
+    Dict( "beta" => par_beta_vec, "c" => par_c_vec, "alpha" => par_alpha_vec, "threshold" => threshold_vec, "Number of exceedance"=> number_exceed_vec)
+end  
+
+
+
+
+#Look for the highest simulation number in the current directory and give the next number as string
+function highest_sim_number(files::Vector{String})
+    pattern = r"^simulated_observations_(\d+)\.jld2$"
+    numbers = Int[]
+
+    for f in files
+        m = match(pattern, f)
+        if m !== nothing
+            push!(numbers, parse(Int, m.captures[1]))
+        end
+    end
+
+    n= isempty(numbers) ? 1 : (maximum(numbers)+1)
+    str = @sprintf("%04d", n)
+end
+function highest_sim_result_number(files::Vector{String})
+    pattern = r"^sim_(\d+)\.jld2$"
+    numbers = Int[]
+
+    for f in files
+        m = match(pattern, f)
+        if m !== nothing
+            push!(numbers, parse(Int, m.captures[1]))
+        end
+    end
+
+    n= isempty(numbers) ? 1 : (maximum(numbers)+1)
+    str = @sprintf("%04d", n)
+end
+#Look for the highest simulation number in the current directory and give the next number as string
+function highest_folder_number(files::Vector{String})
+    pattern = r"^sim_res_folder_(\d+)$"
+    numbers = Int[]
+
+    for f in files
+        m = match(pattern, f)
+        if m !== nothing
+            push!(numbers, parse(Int, m.captures[1]))
+        end
+    end
+
+    n= isempty(numbers) ? 1 : (maximum(numbers)+1)
+    str = @sprintf("%02d", n)
+end
+

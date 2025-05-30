@@ -1,9 +1,7 @@
 include("functions.jl")
 using JLD2
 
-
-(coord_coarse, coord_fine, row_x0,sim_data, observation_data, observation_x0, alpha, param)=load("simulated_observations.jld2")["single_stored_object"]
-
+coord_coarse, coord_fine, row_x0,sim_data, observation_data, observation_x0, alpha, param,threshold=load("simulated_observations.jld2")["single_stored_object"]
 #inputs
 gridsize=size(coord_fine,1)#lenght of fine grid
 N_fine=gridsize^2 #number of fine grid points
@@ -12,36 +10,44 @@ num_sim=size(observation_data,1) #number of simulated realizations
 
 #Numbers for simulation based estimation
 
-N_est_c=1000
+N_est_c=20000
+N_est_c_approx=20000
 N_est_cond=5
 N_burn_in=1000
+
+
 
 
 
 coord_x0=coord_fine[row_x0,:]
 coord_coarse_plus=vcat(coord_coarse,coord_x0')
 num_rep=200
-r_gaussian_vec_coarse(coord_coarse_plus,coord_x0,param,row_x0,num_rep,alpha)
-cov_mat=cov_mat_for_vectors(coord_coarse_plus, coord_coarse_plus,param,coord_x0)
-cov_mat-cov_mat'
+r_gaussian_vec_coarse(coord_coarse_plus,coord_x0,param,num_rep,alpha)
+coord_coarse_plus[1:(end-1),:]
+number_of_exceed=200
+ histogram([       l_2_fun_approx(coord_coarse_plus,coord_x0,param,number_of_exceed,alpha,N_est_c_approx) for i in 1:100])
+@time(histogram( [ l_2_fun(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c) for i in 1:100]))
+l_1_fun_approx(coord_coarse_plus,observation_data,param, observation_x0,alpha)
+l_1_fun(coord_fine,coord_coarse,observation_data,param, observation_x0,row_x0,alpha)
+rand(MvNormal([0.0 for i in 1:N],cov_mat),num_rep)
 
-function r_gaussian_vec_coarse(coord_coarse_plus,coord_x0,param,row_x0,num_rep,alpha) 
-    N = size(coord_coarse_plus,1)
-    cov_mat = cov_mat_for_vectors(coord_coarse_plus, coord_coarse_plus,param,coord_x0).+1e-6 
-    res = rand(MvNormal([0.0 for i in 1:N],cov_mat),num_rep)
-    trend=vec_vario(param,coord_coarse_plus,coord_coarse_plus[row_x0,:])
-    for i in 1:num_rep
-            res[:,i] = 1/alpha*(res[:,i] - trend .-res[:,end]) #variogram
-    end
-    res
+
+N = size(coord_coarse_plus,1)
+cov_mat = cov_mat_for_vectors(coord_coarse_plus, coord_coarse_plus,param,coord_x0).+1e-6 
+res = rand(MvNormal([0.0 for i in 1:N],cov_mat),num_rep)'
+trend=vec_vario(param,coord_coarse_plus,coord_coarse_plus[end,:])
+for i in 1:num_rep
+        res[i,:] = 1/alpha*(res[i,:] - trend .-res[i,end]) #variogram
 end
+res
+i=1
+res[i,end]
 
 
 
-
-
-
-
+N_cond_sim=100
+(modified_observation, modified_observation_x0)=exceed_cond_sim_approx(num_sim,observation_data,observation_x0,threshold )
+(modified_observation, modified_observation_x0)=exceed_cond_sim(N_cond_sim,num_sim,observation_data,observation_x0,threshold, alpha, coord_fine,coord_coarse,param,row_x0  )
 #DIFFERENCE BETWEEN DEPENDEND AND INDEPENDENT SIMULATION IN FBM SIMULATION
 # Circulant embedding testing will follow in seperate file
 n_test=100
