@@ -12,9 +12,9 @@ include("simulate_observation_data.jl")
     number_parallel=highest_folder_number( readdir("results_dir")  )
     path=mkdir("results_dir/sim_res_folder_$(number_parallel)")
 #run simu forever
-while(true)
+for counter in 1:10
     #Simulate observation data
-    number_str,(coord_coarse, coord_fine, row_x0,sim_data, observation_data, observation_x0, param_start, alpha_start)=simulate_observations_fixed_seven_by_seven(gridsize,N_coarse,num_sim,num_runs,beta_true,c_true, alpha_true,path)
+    number_str,(coord_coarse, coord_fine, row_x0,sim_data, observation_data, observation_x0, param_start, alpha_start)=simulate_observations_fixed_9x9(gridsize,N_coarse,num_sim,num_runs,beta_true,c_true, alpha_true,path)
     #our method with conditional simulation
     #run MCMC algorithm
     input_MCMC_cond_sim=(N_MCMC,observation_data,observation_x0,threshold,threshold_method, alpha_start, coord_fine,coord_coarse,param_start,row_x0,n_trial_print,N_est_c,N_cond_sim)

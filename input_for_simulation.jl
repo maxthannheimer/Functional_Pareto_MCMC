@@ -2,7 +2,7 @@
 
 
 
-gridsize=7#lenght of fine grid
+gridsize=9#lenght of fine grid
 N_fine=gridsize^2 #number of fine grid points
 N_coarse=8 #number of weather stations/ conditioning points, obersavation points
 num_sim=200 #number of simulated realizations
@@ -18,7 +18,7 @@ threshold_method="fixed"
 threshold=1.0
 
 #inputs for MCMC
-N_MCMC=10000
+N_MCMC=6000
 N_est_c=20000
 N_est_c_approx=20000
 N_cond_sim=100
