@@ -874,12 +874,51 @@ function l_2_fun_approx(coord_coarse_plus,coord_x0,param,number_of_exceed,alpha,
      # minus for 1/c_l (in log)
  end
 
-function l_2_fun_dependent_no_number_of_exceed(coord_fine, param,row_x0,alpha,N_est_c)
+function l_2_fun_dependent_no_number_of_exceed_old(coord_fine, param,row_x0,alpha,N_est_c)
     tmp = r_log_gaussian_vec_dependent(coord_fine,param,row_x0, N_est_c,alpha) 
     -log(mean([mean( tmp[i] 
         )^(alpha) for i in 1:N_est_c]))  
      # minus for 1/c_l (in log)
 end
+
+
+#22 function has a while loop that samples until the quotient between the empirical variance and the empirical mean is small enough
+function l_2_fun_dependent_no_number_of_exceed(coord_fine, param,row_x0,alpha,N_est_c)
+    #Limit for samples to estimate C, if this is reached, the fucntion will use this as N_est_c
+    N_est_c_lim=500000
+    N=N_est_c #initial number of samples
+    tmp=0 #temporary variable to store the samples start with integer zero to initialize the variable via naive if clause
+    N_sampled=0 #number of samples already taken
+    quot_bound=0.025 #this is the quotient between empirical variance and empirical mean we want to achieve
+    while(true)
+        if tmp==0
+            tmp = r_log_gaussian_vec_dependent(coord_fine,param,row_x0, N-N_sampled,alpha) #initial sampling
+        else
+            tmp = vcat(tmp,r_log_gaussian_vec_dependent(coord_fine,param,row_x0, N-N_sampled,alpha)) #we want N samples, so we sample N-N_sampled more
+        end
+        N_sampled = N #keep track of how many samples we have taken
+        #println("N_sampled: ", N_sampled)
+        r_W_alpha_sample =[mean( tmp[i] )^(alpha) for i in 1:N] #N samples of r(W)^α
+        mean_r_W_alpha_sample = mean(r_W_alpha_sample) #mean of samples,i.e. empiricalmean estimate of r(W)^α
+        if (1/mean_r_W_alpha_sample*sqrt(1/N*var(r_W_alpha_sample)) < quot_bound) #if the quotient between empirical variance and empirical mean is small enough, we can stop sampling
+            return -log( mean_r_W_alpha_sample)  
+        else
+            #otherwise we make N so big that the quotient is small enough
+            N=Int(round(1/(mean_r_W_alpha_sample)^2*var(r_W_alpha_sample)/ quot_bound^2)+1)
+            #println("N: ", N)
+            #if limit is reached, we stop sampling and estimate with N_est_c_lim samples
+            if N>=N_est_c_lim
+                N=N_est_c_lim
+                tmp = vcat(tmp,r_log_gaussian_vec_dependent(coord_fine,param,row_x0, N-N_sampled,alpha))
+                r_W_alpha_sample =  [mean( tmp[i] )^(alpha) for i in 1:N]
+                mean_r_W_alpha_sample = mean(r_W_alpha_sample)
+                @warn "N has reached upper limit, might fluctuate a lot"
+                return -log( mean_r_W_alpha_sample)
+            end
+        end
+    end
+end
+
 
  function c_estimation_dependent(coord_fine, param,row_x0, number_of_exceed,alpha,N_est_c)
     tmp = r_log_gaussian_vec_dependent(coord_fine,param,row_x0, N_est_c,alpha) 
@@ -1065,8 +1104,8 @@ function MCMC(N_MCMC,observation_data,observation_x0,threshold,threshold_method,
         alpha_old=alpha
         #propose new params
         eps_beta=0.05
-        eps_c=0.05
-        eps_alpha=0.05
+        eps_c=0.1
+        eps_alpha=0.1
 
 
         param[2]=uniform_proposal(par_beta_old,eps_beta,0.0,2.0)
@@ -1152,8 +1191,8 @@ function MCMC_approx(N_MCMC,observation_data,observation_x0,threshold, alpha, co
         alpha_old=alpha
         #propose new params
         eps_beta=0.05
-        eps_c=0.05
-        eps_alpha=0.05
+        eps_c=0.1
+        eps_alpha=0.1
 
 
         param[2]=uniform_proposal(par_beta_old,eps_beta,0.0,2.0)

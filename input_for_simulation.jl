@@ -6,11 +6,11 @@ gridsize=9#lenght of fine grid
 N_fine=gridsize^2 #number of fine grid points
 N_coarse=8 #number of weather stations/ conditioning points, obersavation points
 num_sim=200 #number of simulated realizations
-num_runs=20000 #use mcmc approach via simu_specfcts_MCMC, let chain run for num_runs steps for each observation
+num_runs=30000 #use mcmc approach via simu_specfcts_MCMC, let chain run for num_runs steps for each observation
 
 #true params for simulation
-beta_true=1.5
-c_true=2.0
+beta_true=0.5
+c_true=3.0
 alpha_true = 2.0
 
 #threshold and threshold method
@@ -18,7 +18,7 @@ threshold_method="fixed"
 threshold=1.0
 
 #inputs for MCMC
-N_MCMC=6000
+N_MCMC=10000
 N_est_c=20000
 N_est_c_approx=20000
 N_cond_sim=100
